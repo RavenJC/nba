@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>M3U8 Auto Player</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.10/hls.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.10/shaka-player.compiled.js"></script>
     <style>
         body {
             margin: 0;
@@ -125,82 +125,144 @@
         const video = document.getElementById('video');
         const statusDiv = document.getElementById('status');
         const streamUrl = 'https://nba2.warm98.workers.dev/playlist.m3u8';
-        let hls;
+        let player;
 
         function updateStatus(message, type = '') {
             statusDiv.innerHTML = message;
             statusDiv.className = `status ${type}`;
         }
 
-        function initPlayer() {
-            if (Hls.isSupported()) {
-                hls = new Hls({
-                    debug: false,
-                    enableWorker: true,
-                    lowLatencyMode: true,
-                    backBufferLength: 90
-                });
+        async function initPlayer() {
+            // Check if Shaka Player is supported
+            if (!shaka.Player.isBrowserSupported()) {
+                updateStatus('❌ Browser not supported by Shaka Player', 'error');
+                return;
+            }
 
-                hls.loadSource(streamUrl);
-                hls.attachMedia(video);
+            // Initialize Shaka Player
+            player = new shaka.Player(video);
 
-                hls.on(Hls.Events.MEDIA_ATTACHED, function () {
-                    updateStatus('📡 Media attached, loading stream...', 'success');
-                });
-
-                hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
-                    updateStatus(`✅ Stream loaded successfully! Quality levels: ${data.levels.length}`, 'success');
-                    
-                    // Attempt autoplay
-                    video.play().catch(e => {
-                        updateStatus('⚠️ Autoplay blocked. Click play button to start.', 'error');
-                        console.log('Autoplay prevented:', e);
-                    });
-                });
-
-                hls.on(Hls.Events.ERROR, function (event, data) {
-                    console.error('HLS error:', data);
-                    
-                    if (data.fatal) {
-                        switch (data.type) {
-                            case Hls.ErrorTypes.NETWORK_ERROR:
-                                updateStatus('❌ Network error. Attempting to recover...', 'error');
-                                hls.startLoad();
-                                break;
-                            case Hls.ErrorTypes.MEDIA_ERROR:
-                                updateStatus('❌ Media error. Attempting to recover...', 'error');
-                                hls.recoverMediaError();
-                                break;
-                            default:
-                                updateStatus('❌ Fatal error occurred. Try reloading.', 'error');
-                                hls.destroy();
-                                break;
-                        }
-                    } else {
-                        updateStatus(`⚠️ ${data.type} error: ${data.details}`, 'error');
+            // Configure player to be less restrictive
+            player.configure({
+                streaming: {
+                    retryParameters: {
+                        timeout: 30000,
+                        maxAttempts: 5,
+                        baseDelay: 1000,
+                        backoffFactor: 2,
+                        fuzzFactor: 0.5
+                    },
+                    failureCallback: (error) => {
+                        console.error('Streaming failure:', error);
+                    },
+                    useNativeHlsOnSafari: true
+                },
+                drm: {
+                    retryParameters: {
+                        timeout: 30000,
+                        maxAttempts: 5,
+                        baseDelay: 1000,
+                        backoffFactor: 2,
+                        fuzzFactor: 0.5
                     }
-                });
+                },
+                // Disable content security policy restrictions
+                restrictions: {
+                    minWidth: 0,
+                    maxWidth: Infinity,
+                    minHeight: 0,
+                    maxHeight: Infinity,
+                    minPixels: 0,
+                    maxPixels: Infinity,
+                    minFrameRate: 0,
+                    maxFrameRate: Infinity,
+                    minBandwidth: 0,
+                    maxBandwidth: Infinity
+                }
+            });
 
-                hls.on(Hls.Events.LEVEL_SWITCHED, function (event, data) {
-                    updateStatus(`📺 Quality switched to level ${data.level}`, 'success');
-                });
+            // Listen for error events
+            player.addEventListener('error', onErrorEvent);
 
-            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                // Safari support
-                video.src = streamUrl;
-                updateStatus('🍎 Using native HLS support (Safari)', 'success');
+            // Set up network filters to handle CORS and security
+            player.getNetworkingEngine().registerRequestFilter((type, request) => {
+                // Modify headers to help with CORS and security
+                request.headers = request.headers || {};
+                request.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+                request.headers['Referer'] = window.location.origin;
+                request.headers['Origin'] = window.location.origin;
                 
-                video.addEventListener('loadedmetadata', function() {
-                    updateStatus('✅ Stream loaded successfully!', 'success');
-                });
+                // Remove any problematic headers that might trigger security checks
+                delete request.headers['X-Requested-With'];
+            });
+
+            try {
+                updateStatus('🔄 Loading stream with Shaka Player (relaxed security)...', '');
                 
-                video.addEventListener('error', function(e) {
-                    updateStatus('❌ Error loading stream', 'error');
-                });
-            } else {
-                updateStatus('❌ HLS not supported in this browser', 'error');
+                // Load the manifest
+                await player.load(streamUrl);
+                
+                updateStatus('✅ Stream loaded successfully!', 'success');
+                
+                // Attempt autoplay
+                try {
+                    await video.play();
+                    updateStatus('▶️ Stream is playing', 'success');
+                } catch (playError) {
+                    updateStatus('⚠️ Autoplay blocked. Click play to start.', 'error');
+                    console.log('Autoplay prevented:', playError);
+                }
+                
+            } catch (error) {
+                console.error('Shaka Player failed, trying fallback...', error);
+                // Try fallback with native HLS
+                tryNativeHLS();
             }
         }
+
+        function tryNativeHLS() {
+            updateStatus('🔄 Trying native HLS playback...', '');
+            
+            if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = streamUrl;
+                
+                video.addEventListener('loadedmetadata', function() {
+                    updateStatus('✅ Stream loaded with native HLS!', 'success');
+                }, { once: true });
+                
+                video.addEventListener('canplay', function() {
+                    // Attempt autoplay
+                    video.play().catch(e => {
+                        updateStatus('⚠️ Native HLS loaded. Click play to start.', 'error');
+                    });
+                }, { once: true });
+                
+                video.addEventListener('error', function(e) {
+                    console.error('Native HLS also failed:', e);
+                    showFinalError();
+                }, { once: true });
+                
+            } else {
+                // Try direct assignment anyway (some browsers support it)
+                video.src = streamUrl;
+                setTimeout(() => {
+                    if (video.readyState === 0) {
+                        showFinalError();
+                    }
+                }, 5000);
+            }
+        }
+
+        function showFinalError() {
+            updateStatus(`❌ Stream blocked by security policies
+                <br><br>💡 <strong>Solutions:</strong>
+                <br>• Install browser extension: "Disable Content Security Policy" or "CORS Unblock"
+                <br>• Use VLC Media Player: <a href="vlc://${streamUrl}" style="color: #51cf66;">Open in VLC</a>
+                <br>• Copy URL for external player: <code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px;">${streamUrl}</code>
+                <br>• Try in different browser (Firefox often works better)`, 'error');
+        }
+
+
 
 
 
