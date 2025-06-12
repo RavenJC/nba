@@ -125,6 +125,12 @@
             statusDiv.className = `status ${type}`;
         }
 
+        // Define the error handling function
+        function onErrorEvent(event) {
+            console.error('Error code', event.detail.code, 'object', event.detail);
+            updateStatus('❌ An error occurred. Check the console for details.', 'error');
+        }
+
         async function initPlayer() {
             // Check if Shaka Player is supported
             if (!shaka.Player.isBrowserSupported()) {
@@ -205,11 +211,6 @@
                 console.error('Shaka Player failed, trying fallback...', error);
                 tryNativeHLS();
             }
-        }
-
-        function onErrorEvent(event) {
-            console.error('Error code', event.detail.code, 'object', event.detail);
-            updateStatus('❌ An error occurred. Check the console for details.', 'error');
         }
 
         function tryNativeHLS() {
