@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -125,88 +126,89 @@
             statusDiv.className = `status ${type}`;
         }
 
-        // Define the error handling function
-        function onErrorEvent(event) {
-            console.error('Error code', event.detail.code, 'object', event.detail);
-            updateStatus('❌ An error occurred. Check the console for details.', 'error');
-        }
-
         async function initPlayer() {
             // Check if Shaka Player is supported
             if (!shaka.Player.isBrowserSupported()) {
                 updateStatus('❌ Browser not supported by Shaka Player', 'error');
+                tryNativeHLS();
                 return;
             }
 
-            // Initialize Shaka Player without the media element
-            player = new shaka.Player();
-
-            // Attach the player to the video element
-            await player.attach(video);
-
-            // Configure player to be less restrictive
-            player.configure({
-                streaming: {
-                    retryParameters: {
-                        timeout: 30000,
-                        maxAttempts: 5,
-                        baseDelay: 1000,
-                        backoffFactor: 2,
-                        fuzzFactor: 0.5
-                    },
-                    failureCallback: (error) => {
-                        console.error('Streaming failure:', error);
-                    },
-                    useNativeHlsOnSafari: true
-                },
-                drm: {
-                    retryParameters: {
-                        timeout: 30000,
-                        maxAttempts: 5,
-                        baseDelay: 1000,
-                        backoffFactor: 2,
-                        fuzzFactor: 0.5
-                    }
-                },
-                restrictions: {
-                    minWidth: 0,
-                    maxWidth: Infinity,
-                    minHeight: 0,
-                    maxHeight: Infinity,
-                    minPixels: 0,
-                    maxPixels: Infinity,
-                    minFrameRate: 0,
-                    maxFrameRate: Infinity,
-                    minBandwidth: 0,
-                    maxBandwidth: Infinity
-                }
-            });
-
-            // Listen for error events
-            player.addEventListener('error', onErrorEvent);
-
-            // Set up network filters to handle CORS and security
-            player.getNetworkingEngine().registerRequestFilter((type, request) => {
-                request.headers = request.headers || {};
-                request.headers['User -Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-                request.headers['Referer'] = window.location.origin;
-                request.headers['Origin'] = window.location.origin;
-                delete request.headers['X-Requested-With'];
-            });
-
             try {
-                updateStatus('🔄 Loading stream with Shaka Player (relaxed security)...', '');
-                await player.load(streamUrl);
-                updateStatus('✅ Stream loaded successfully!', 'success');
+                // Initialize Shaka Player
+                player = new shaka.Player();
+                await player.attach(video);
 
+                // Configure player to be less restrictive
+                player.configure({
+                    streaming: {
+                        retryParameters: {
+                            timeout: 30000,
+                            maxAttempts: 5,
+                            baseDelay: 1000,
+                            backoffFactor: 2,
+                            fuzzFactor: 0.5
+                        },
+                        useNativeHlsOnSafari: true,
+                        bufferingGoal: 30,
+                        rebufferingGoal: 5
+                    },
+                    drm: {
+                        retryParameters: {
+                            timeout: 30000,
+                            maxAttempts: 5,
+                            baseDelay: 1000,
+                            backoffFactor: 2,
+                            fuzzFactor: 0.5
+                        }
+                    },
+                    restrictions: {
+                        minWidth: 0,
+                        maxWidth: Infinity,
+                        minHeight: 0,
+                        maxHeight: Infinity,
+                        minPixels: 0,
+                        maxPixels: Infinity,
+                        minFrameRate: 0,
+                        maxFrameRate: Infinity,
+                        minBandwidth: 0,
+                        maxBandwidth: Infinity
+                    }
+                });
+
+                // Listen for error events
+                player.addEventListener('error', (event) => {
+                    console.error('Shaka Player Error Event:', event.detail);
+                    updateStatus(`❌ Player Error: ${event.detail.message || 'Unknown error'}`, 'error');
+                    // Try fallback after error
+                    setTimeout(() => tryNativeHLS(), 2000);
+                });
+
+                // Set up network filters to handle CORS and security
+                player.getNetworkingEngine().registerRequestFilter((type, request) => {
+                    request.headers = request.headers || {};
+                    request.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+                    request.headers['Referer'] = window.location.origin;
+                    request.headers['Origin'] = window.location.origin;
+                    delete request.headers['X-Requested-With'];
+                });
+
+                updateStatus('🔄 Loading stream with Shaka Player...', '');
+                
+                // Load the manifest
+                await player.load(streamUrl);
+                
+                updateStatus('✅ Stream loaded successfully!', 'success');
+                
                 // Attempt autoplay
                 try {
                     await video.play();
                     updateStatus('▶️ Stream is playing', 'success');
                 } catch (playError) {
-                    updateStatus('⚠️ Autoplay blocked. Click play to start.', 'error');
                     console.log('Autoplay prevented:', playError);
+                    updateStatus('⚠️ Autoplay blocked. Click play to start.', 'error');
                 }
+                
             } catch (error) {
                 console.error('Shaka Player failed, trying fallback...', error);
                 tryNativeHLS();
@@ -215,6 +217,12 @@
 
         function tryNativeHLS() {
             updateStatus('🔄 Trying native HLS playback...', '');
+            
+            // Clean up Shaka player if it exists
+            if (player) {
+                player.destroy().catch(console.error);
+                player = null;
+            }
             
             if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = streamUrl;
@@ -225,7 +233,9 @@
                 
                 video.addEventListener('canplay', function() {
                     // Attempt autoplay
-                    video.play().catch(e => {
+                    video.play().then(() => {
+                        updateStatus('▶️ Stream is playing', 'success');
+                    }).catch(e => {
                         updateStatus('⚠️ Native HLS loaded. Click play to start.', 'error');
                     });
                 }, { once: true });
@@ -251,18 +261,44 @@
                 <br><br>💡 <strong>Solutions:</strong>
                 <br>• Install browser extension: "Disable Content Security Policy" or "CORS Unblock"
                 <br>• Use VLC Media Player: <a href="vlc://${streamUrl}" style="color: #51cf66;">Open in VLC</a>
-                <br>• Copy URL for external player: <code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px;">${streamUrl}</code>
+                <br>• Copy URL for external player: <code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px; word-break: break-all;">${streamUrl}</code>
                 <br>• Try in different browser (Firefox often works better)`, 'error');
         }
 
-        // Video event listeners
+        // Video event listeners for status updates
         video.addEventListener('play', () => updateStatus('▶️ Playing', 'success'));
         video.addEventListener('pause', () => updateStatus('⏸️ Paused', ''));
         video.addEventListener('waiting', () => updateStatus('⏳ Buffering...', ''));
         video.addEventListener('canplay', () => updateStatus('✅ Ready to play', 'success'));
+        video.addEventListener('ended', () => updateStatus('🏁 Stream ended', ''));
+        video.addEventListener('loadstart', () => updateStatus('🔄 Loading...', ''));
+
+        // Auto-retry mechanism for failed streams
+        video.addEventListener('error', () => {
+            console.log('Video error detected, retrying in 5 seconds...');
+            setTimeout(() => {
+                updateStatus('🔄 Retrying stream...', '');
+                initPlayer();
+            }, 5000);
+        });
 
         // Initialize player when page loads
         window.addEventListener('load', initPlayer);
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (player) {
+                player.destroy().catch(console.error);
+            }
+        });
+
+        // Auto-retry every 30 seconds if stream fails
+        setInterval(() => {
+            if (video.readyState === 0 && !video.src) {
+                console.log('Stream appears dead, attempting restart...');
+                initPlayer();
+            }
+        }, 30000);
     </script>
 </body>
 </html>
