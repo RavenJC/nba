@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M3U8 Auto Player</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.10/hls.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .player-container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            font-weight: 300;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        #video {
+            width: 100%;
+            height: auto;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            background: #000;
+        }
+
+
+
+        .status {
+            color: white;
+            text-align: center;
+            margin-top: 15px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            font-size: 14px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            color: #ff6b6b;
+            background: rgba(255, 107, 107, 0.1);
+            border: 1px solid rgba(255, 107, 107, 0.3);
+        }
+
+        .success {
+            color: #51cf66;
+            background: rgba(81, 207, 102, 0.1);
+            border: 1px solid rgba(81, 207, 102, 0.3);
+        }
+
+        @media (max-width: 600px) {
+            .player-container {
+                padding: 20px;
+                margin: 10px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+            
+
+        }
+    </style>
+</head>
+<body>
+    <div class="player-container">
+        <h1>🎬 Live Stream Player</h1>
+        
+        <video 
+            id="video" 
+            controls 
+            autoplay 
+            muted
+            playsinline
+            poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 225'%3E%3Crect width='400' height='225' fill='%23000'/%3E%3Ctext x='200' y='112.5' text-anchor='middle' fill='white' font-size='20' font-family='Arial'%3ELoading Stream...%3C/text%3E%3C/svg%3E">
+            Your browser does not support the video tag.
+        </video>
+
+
+
+        <div id="status" class="status">
+            <div class="loading"></div>
+            Initializing player...
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const statusDiv = document.getElementById('status');
+        const streamUrl = 'https://nba2.warm98.workers.dev/playlist.m3u8';
+        let hls;
+
+        function updateStatus(message, type = '') {
+            statusDiv.innerHTML = message;
+            statusDiv.className = `status ${type}`;
+        }
+
+        function initPlayer() {
+            if (Hls.isSupported()) {
+                hls = new Hls({
+                    debug: false,
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                    backBufferLength: 90
+                });
+
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
+
+                hls.on(Hls.Events.MEDIA_ATTACHED, function () {
+                    updateStatus('📡 Media attached, loading stream...', 'success');
+                });
+
+                hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
+                    updateStatus(`✅ Stream loaded successfully! Quality levels: ${data.levels.length}`, 'success');
+                    
+                    // Attempt autoplay
+                    video.play().catch(e => {
+                        updateStatus('⚠️ Autoplay blocked. Click play button to start.', 'error');
+                        console.log('Autoplay prevented:', e);
+                    });
+                });
+
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    console.error('HLS error:', data);
+                    
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                updateStatus('❌ Network error. Attempting to recover...', 'error');
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                updateStatus('❌ Media error. Attempting to recover...', 'error');
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                updateStatus('❌ Fatal error occurred. Try reloading.', 'error');
+                                hls.destroy();
+                                break;
+                        }
+                    } else {
+                        updateStatus(`⚠️ ${data.type} error: ${data.details}`, 'error');
+                    }
+                });
+
+                hls.on(Hls.Events.LEVEL_SWITCHED, function (event, data) {
+                    updateStatus(`📺 Quality switched to level ${data.level}`, 'success');
+                });
+
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Safari support
+                video.src = streamUrl;
+                updateStatus('🍎 Using native HLS support (Safari)', 'success');
+                
+                video.addEventListener('loadedmetadata', function() {
+                    updateStatus('✅ Stream loaded successfully!', 'success');
+                });
+                
+                video.addEventListener('error', function(e) {
+                    updateStatus('❌ Error loading stream', 'error');
+                });
+            } else {
+                updateStatus('❌ HLS not supported in this browser', 'error');
+            }
+        }
+
+
+
+        // Video event listeners
+        video.addEventListener('play', () => updateStatus('▶️ Playing', 'success'));
+        video.addEventListener('pause', () => updateStatus('⏸️ Paused', ''));
+        video.addEventListener('waiting', () => updateStatus('⏳ Buffering...', ''));
+        video.addEventListener('canplay', () => updateStatus('✅ Ready to play', 'success'));
+
+        // Initialize player when page loads
+        window.addEventListener('load', initPlayer);
+    </script>
+</body>
+</html>
