@@ -1,4 +1,3 @@
-
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -46,8 +45,6 @@
             background: #000;
         }
 
-
-
         .status {
             color: white;
             text-align: center;
@@ -94,8 +91,6 @@
             h1 {
                 font-size: 2em;
             }
-            
-
         }
     </style>
 </head>
@@ -112,8 +107,6 @@
             poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 225'%3E%3Crect width='400' height='225' fill='%23000'/%3E%3Ctext x='200' y='112.5' text-anchor='middle' fill='white' font-size='20' font-family='Arial'%3ELoading Stream...%3C/text%3E%3C/svg%3E">
             Your browser does not support the video tag.
         </video>
-
-
 
         <div id="status" class="status">
             <div class="loading"></div>
@@ -139,8 +132,11 @@
                 return;
             }
 
-            // Initialize Shaka Player
-            player = new shaka.Player(video);
+            // Initialize Shaka Player without the media element
+            player = new shaka.Player();
+
+            // Attach the player to the video element
+            await player.attach(video);
 
             // Configure player to be less restrictive
             player.configure({
@@ -166,7 +162,6 @@
                         fuzzFactor: 0.5
                     }
                 },
-                // Disable content security policy restrictions
                 restrictions: {
                     minWidth: 0,
                     maxWidth: Infinity,
@@ -186,24 +181,18 @@
 
             // Set up network filters to handle CORS and security
             player.getNetworkingEngine().registerRequestFilter((type, request) => {
-                // Modify headers to help with CORS and security
                 request.headers = request.headers || {};
-                request.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+                request.headers['User -Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
                 request.headers['Referer'] = window.location.origin;
                 request.headers['Origin'] = window.location.origin;
-                
-                // Remove any problematic headers that might trigger security checks
                 delete request.headers['X-Requested-With'];
             });
 
             try {
                 updateStatus('🔄 Loading stream with Shaka Player (relaxed security)...', '');
-                
-                // Load the manifest
                 await player.load(streamUrl);
-                
                 updateStatus('✅ Stream loaded successfully!', 'success');
-                
+
                 // Attempt autoplay
                 try {
                     await video.play();
@@ -212,12 +201,15 @@
                     updateStatus('⚠️ Autoplay blocked. Click play to start.', 'error');
                     console.log('Autoplay prevented:', playError);
                 }
-                
             } catch (error) {
                 console.error('Shaka Player failed, trying fallback...', error);
-                // Try fallback with native HLS
                 tryNativeHLS();
             }
+        }
+
+        function onErrorEvent(event) {
+            console.error('Error code', event.detail.code, 'object', event.detail);
+            updateStatus('❌ An error occurred. Check the console for details.', 'error');
         }
 
         function tryNativeHLS() {
@@ -261,10 +253,6 @@
                 <br>• Copy URL for external player: <code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px;">${streamUrl}</code>
                 <br>• Try in different browser (Firefox often works better)`, 'error');
         }
-
-
-
-
 
         // Video event listeners
         video.addEventListener('play', () => updateStatus('▶️ Playing', 'success'));
